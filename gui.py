@@ -170,6 +170,8 @@ class ChessGUI(QMainWindow):
     def __init__(self, engine_path):
         super().__init__()
         self.engine = ChessEngine(engine_path)
+        self.move_stack = []  # Stack to store moves for undo/redo
+        self.redo_stack = []  # Stack to store undone moves for redo
         self.init_ui()
     
     def init_ui(self):
@@ -198,10 +200,27 @@ class ChessGUI(QMainWindow):
         side_layout.addWidget(QLabel('Move History:'))
         side_layout.addWidget(self.move_history)
         
+        # Button layout
+        button_layout = QHBoxLayout()
+        
         # New Game button
         new_game_btn = QPushButton('New Game')
         new_game_btn.clicked.connect(self.new_game)
-        side_layout.addWidget(new_game_btn)
+        button_layout.addWidget(new_game_btn)
+        
+        # Undo button
+        self.undo_btn = QPushButton('Undo')
+        self.undo_btn.clicked.connect(self.undo_move)
+        self.undo_btn.setEnabled(False)
+        button_layout.addWidget(self.undo_btn)
+        
+        # Redo button
+        self.redo_btn = QPushButton('Redo')
+        self.redo_btn.clicked.connect(self.redo_move)
+        self.redo_btn.setEnabled(False)
+        button_layout.addWidget(self.redo_btn)
+        
+        side_layout.addLayout(button_layout)
         
         side_panel.setLayout(side_layout)
         layout.addWidget(side_panel)
@@ -216,9 +235,73 @@ class ChessGUI(QMainWindow):
         self.board_widget.update_board()
         self.move_history.clear()
         self.eval_label.setText('Evaluation: 0.0')
+        self.move_stack.clear()
+        self.redo_stack.clear()
+        self.update_button_states()
+    
+    def update_button_states(self):
+        self.undo_btn.setEnabled(len(self.move_stack) > 0)
+        self.redo_btn.setEnabled(len(self.redo_stack) > 0)
+    
+    def undo_move(self):
+        if len(self.move_stack) >= 2:  # Undo both player and AI moves
+            # Undo AI move
+            ai_move = self.move_stack.pop()
+            self.redo_stack.append(ai_move)
+            self.board_widget.board.pop()
+            
+            # Undo player move
+            player_move = self.move_stack.pop()
+            self.redo_stack.append(player_move)
+            self.board_widget.board.pop()
+            
+            # Update move history by removing the last complete move (both white and black)
+            text = self.move_history.toPlainText()
+            lines = text.split('\n')
+            # Remove empty lines and keep only complete moves
+            lines = [line for line in lines if line.strip()]
+            # Remove last two lines (White and Black moves)
+            if len(lines) >= 2:
+                lines = lines[:-2]
+            # Reconstruct text with proper formatting
+            self.move_history.setText('\n'.join(lines + ['']))  # Add empty line at end
+            
+            self.board_widget.update_board()
+            self.update_button_states()
+            
+            # Update evaluation
+            value, _, _ = self.engine.evaluate_position(self.board_widget.board)
+            self.eval_label.setText(f'Evaluation: {value:.3f}')
+    
+    def redo_move(self):
+        if len(self.redo_stack) >= 2:  # Redo both player and AI moves
+            # Redo player move
+            player_move = self.redo_stack.pop()
+            self.move_stack.append(player_move)
+            move_text = self.board_widget.board.san(player_move)
+            self.board_widget.board.push(player_move)
+            self.move_history.append(f"White: {move_text}")
+            
+            # Redo AI move
+            ai_move = self.redo_stack.pop()
+            self.move_stack.append(ai_move)
+            move_text = self.board_widget.board.san(ai_move)
+            self.board_widget.board.push(ai_move)
+            self.move_history.append(f"Black: {move_text}\n")
+            
+            self.board_widget.update_board()
+            self.update_button_states()
+            
+            # Update evaluation
+            value, _, _ = self.engine.evaluate_position(self.board_widget.board)
+            self.eval_label.setText(f'Evaluation: {value:.3f}')
     
     def on_player_move(self, move_data):
         move, move_text = move_data
+        # Clear redo stack when a new move is made
+        self.redo_stack.clear()
+        # Add move to stack
+        self.move_stack.append(move)
         # Update move history with pre-computed move text
         self.move_history.append(f"White: {move_text}")
         
@@ -232,6 +315,8 @@ class ChessGUI(QMainWindow):
                 ai_move_text = self.board_widget.board.san(best_move)
                 # Make the move
                 self.board_widget.board.push(best_move)
+                # Add AI move to stack
+                self.move_stack.append(best_move)
                 # Update history with stored text
                 self.move_history.append(f"Black: {ai_move_text}\n")
                 self.board_widget.update_board()
@@ -239,6 +324,8 @@ class ChessGUI(QMainWindow):
         if self.board_widget.board.is_game_over():
             result = self.board_widget.board.result()
             self.move_history.append(f"\nGame Over! Result: {result}")
+        
+        self.update_button_states()
 
 def main():
     app = QApplication(sys.argv)
