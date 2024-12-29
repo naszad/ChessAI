@@ -250,7 +250,7 @@ def main():
         print("Please add chess piece images to the 'pieces' directory")
         return
     
-    engine_path = "D:/ChessAI/checkpoints/model_epoch_10.pt"  # Update this path
+    engine_path = "D:/ChessAI/checkpoints/model_epoch_20.pt"  # Update this path
     gui = ChessGUI(engine_path)
     gui.show()
     sys.exit(app.exec())
