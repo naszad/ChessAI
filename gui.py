@@ -172,6 +172,7 @@ class ChessGUI(QMainWindow):
         self.engine = ChessEngine(engine_path)
         self.move_stack = []  # Stack to store moves for undo/redo
         self.redo_stack = []  # Stack to store undone moves for redo
+        self.hint_move = None  # Store the current hint move
         self.init_ui()
     
     def init_ui(self):
@@ -193,6 +194,10 @@ class ChessGUI(QMainWindow):
         # Evaluation display
         self.eval_label = QLabel('Evaluation: 0.0')
         side_layout.addWidget(self.eval_label)
+        
+        # Hint display
+        self.hint_label = QLabel('')
+        side_layout.addWidget(self.hint_label)
         
         # Move history
         self.move_history = QTextEdit()
@@ -220,6 +225,11 @@ class ChessGUI(QMainWindow):
         self.redo_btn.setEnabled(False)
         button_layout.addWidget(self.redo_btn)
         
+        # Hint button
+        self.hint_btn = QPushButton('Hint')
+        self.hint_btn.clicked.connect(self.show_hint)
+        button_layout.addWidget(self.hint_btn)
+        
         side_layout.addLayout(button_layout)
         
         side_panel.setLayout(side_layout)
@@ -235,13 +245,48 @@ class ChessGUI(QMainWindow):
         self.board_widget.update_board()
         self.move_history.clear()
         self.eval_label.setText('Evaluation: 0.0')
+        self.hint_label.setText('')
         self.move_stack.clear()
         self.redo_stack.clear()
+        self.hint_move = None
         self.update_button_states()
+    
+    def show_hint(self):
+        if not self.board_widget.board.is_game_over() and self.board_widget.board.turn == chess.WHITE:
+            value, best_move, move_probs = self.engine.evaluate_position(self.board_widget.board)
+            if best_move:
+                move_text = self.board_widget.board.san(best_move)
+                self.hint_label.setText(f'Suggested move: {move_text}')
+                self.hint_move = best_move
+                
+                # Highlight the suggested move on the board
+                from_square = best_move.from_square
+                to_square = best_move.to_square
+                from_row, from_col = 7 - chess.square_rank(from_square), chess.square_file(from_square)
+                to_row, to_col = 7 - chess.square_rank(to_square), chess.square_file(to_square)
+                
+                # Clear previous highlights
+                for row in range(8):
+                    for col in range(8):
+                        square = self.board_widget.squares[row][col]
+                        if (row, col) not in [(from_row, from_col), (to_row, to_col)]:
+                            square.setStyleSheet(square._get_background_color())
+                
+                # Highlight the from and to squares
+                self.board_widget.squares[from_row][from_col].setStyleSheet(
+                    f"{self.board_widget.squares[from_row][from_col]._get_background_color()} border: 2px solid #0000FF;"
+                )
+                self.board_widget.squares[to_row][to_col].setStyleSheet(
+                    f"{self.board_widget.squares[to_row][to_col]._get_background_color()} border: 2px solid #0000FF;"
+                )
     
     def update_button_states(self):
         self.undo_btn.setEnabled(len(self.move_stack) > 0)
         self.redo_btn.setEnabled(len(self.redo_stack) > 0)
+        self.hint_btn.setEnabled(
+            not self.board_widget.board.is_game_over() and 
+            self.board_widget.board.turn == chess.WHITE
+        )
     
     def undo_move(self):
         if len(self.move_stack) >= 2:  # Undo both player and AI moves
