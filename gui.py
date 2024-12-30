@@ -1,8 +1,8 @@
 import sys
 import chess
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                            QHBoxLayout, QLabel, QPushButton, QTextEdit)
-from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QFont
+                            QHBoxLayout, QLabel, QPushButton, QTextEdit, QColorDialog, QFileDialog, QInputDialog)
+from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QFont, QActionGroup
 from PyQt6.QtCore import Qt, QRect, QSize, pyqtSignal
 import os
 from inference import ChessEngine
@@ -31,11 +31,13 @@ class ChessBoard(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.parent = parent  # Store reference to parent GUI
         self.board = chess.Board()
         self.square_size = 80
         self.selected_square = None
         self.legal_moves = set()
         self.flipped = False  # Track if board is flipped
+        self.last_move = None  # Store the last move made
         
         # Load piece images
         self.pieces = {}
@@ -80,48 +82,96 @@ class ChessBoard(QWidget):
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation
             )
-            print(f"Loaded piece image: {filename}")
         
         # Create layout
         layout = QVBoxLayout()
-        board_layout = QHBoxLayout()
         
         # Create squares
         self.squares = [[ChessSquare(row, col, self.square_size) 
                         for col in range(8)] for row in range(8)]
         
-        # Add squares to layout
-        board_widget = QWidget()
+        # Create board layout with coordinates if enabled
+        board_container = QWidget()
         board_layout = QVBoxLayout()
         board_layout.setSpacing(0)
         board_layout.setContentsMargins(0, 0, 0, 0)
         
+        # Add file letters (a-h) on top if coordinates are enabled
+        if self.parent and self.parent.settings['game']['show_coordinates']:
+            file_layout = QHBoxLayout()
+            file_layout.setSpacing(0)
+            file_layout.setContentsMargins(0, 0, 0, 0)
+            
+            # Add spacer for rank labels
+            spacer = QLabel()
+            spacer.setFixedSize(20, 20)
+            file_layout.addWidget(spacer)
+            
+            # Add file letters (a to h from left to right when not flipped)
+            for file in range(8):
+                file_label = QLabel(chr(ord('a') + (file if not self.flipped else 7 - file)))
+                file_label.setFixedSize(self.square_size, 20)
+                file_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                file_layout.addWidget(file_label)
+            
+            board_layout.addLayout(file_layout)
+        
+        # Create main board grid with rank numbers
+        board_grid = QHBoxLayout()
+        board_grid.setSpacing(0)
+        board_grid.setContentsMargins(0, 0, 0, 0)
+        
+        # Add rank numbers on left if coordinates are enabled
+        if self.parent and self.parent.settings['game']['show_coordinates']:
+            rank_column = QVBoxLayout()
+            rank_column.setSpacing(0)
+            rank_column.setContentsMargins(0, 0, 0, 0)
+            
+            # Add rank numbers (8 to 1 from top to bottom when not flipped)
+            for rank in range(8):
+                rank_label = QLabel(str(8 - rank if not self.flipped else rank + 1))
+                rank_label.setFixedSize(20, self.square_size)
+                rank_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                rank_column.addWidget(rank_label)
+            
+            board_grid.addLayout(rank_column)
+        
+        # Create squares grid
+        squares_widget = QWidget()
+        squares_layout = QVBoxLayout()
+        squares_layout.setSpacing(0)
+        squares_layout.setContentsMargins(0, 0, 0, 0)
+        
         for row in range(8):
             row_layout = QHBoxLayout()
             row_layout.setSpacing(0)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            
             for col in range(8):
                 square = self.squares[row][col]
                 square.clicked.connect(self.square_clicked)
                 row_layout.addWidget(square)
-            board_layout.addLayout(row_layout)
+            
+            squares_layout.addLayout(row_layout)
         
-        board_widget.setLayout(board_layout)
-        layout.addWidget(board_widget)
+        squares_widget.setLayout(squares_layout)
+        board_grid.addWidget(squares_widget)
+        board_layout.addLayout(board_grid)
+        
+        board_container.setLayout(board_layout)
+        layout.addWidget(board_container)
         self.setLayout(layout)
         
         self.update_board()
     
-    def flip_board(self, flipped):
-        """Flip the board view."""
-        self.flipped = flipped
-        self.update_board()
-    
-    def get_square_position(self, row, col):
-        """Get the actual board position based on whether the board is flipped."""
-        if self.flipped:
-            return chess.square(7-col, row)  # Flip both row and column
-        else:
-            return chess.square(col, 7-row)  # Normal orientation
+    def _get_square_color(self, row, col):
+        """Get the background color for a square based on current theme."""
+        if not self.parent:
+            return "#FFFFFF" if (row + col) % 2 == 0 else "#769656"
+        
+        theme = self.parent.settings['visual']['board_theme']
+        colors = self.parent.settings['visual']['colors'][theme if theme != 'Custom Colors' else 'custom']
+        return colors['light'] if (row + col) % 2 == 0 else colors['dark']
     
     def update_board(self):
         for row in range(8):
@@ -137,13 +187,46 @@ class ChessBoard(QWidget):
                 if piece:
                     square.setPixmap(self.pieces[piece.symbol()])
                 
-                # Highlight selected square and legal moves
-                if self.selected_square == (row, col):
-                    square.setStyleSheet(f"{square._get_background_color()} border: 2px solid #FFFF00;")
-                elif square_idx in [move.to_square for move in self.legal_moves]:
-                    square.setStyleSheet(f"{square._get_background_color()} border: 2px solid #00FF00;")
-                else:
-                    square.setStyleSheet(square._get_background_color())
+                # Get base color
+                base_color = self._get_square_color(row, col)
+                style = f"background-color: {base_color};"
+                
+                # Add highlights based on settings
+                if self.parent:
+                    # Selected piece highlight
+                    if self.selected_square == (row, col):
+                        style += f" border: 2px solid {self.parent.settings['visual']['highlight_colors']['selected_piece']};"
+                    # Legal moves highlight
+                    elif self.parent.settings['game']['show_legal_moves'] and square_idx in [move.to_square for move in self.legal_moves]:
+                        style += f" border: 2px solid {self.parent.settings['visual']['highlight_colors']['legal_moves']};"
+                    # Last move highlight
+                    elif self.last_move and square_idx in [self.last_move.from_square, self.last_move.to_square]:
+                        style += f" border: 2px solid {self.parent.settings['visual']['highlight_colors']['last_move']};"
+                    # Check highlight
+                    elif self.board.is_check() and piece and piece.piece_type == chess.KING and piece.color == self.board.turn:
+                        style += f" border: 2px solid {self.parent.settings['visual']['highlight_colors']['check']};"
+                
+                square.setStyleSheet(style)
+    
+    def flip_board(self, flipped):
+        """Flip the board view."""
+        self.flipped = flipped
+        if self.parent and self.parent.settings['game']['show_coordinates']:
+            # Store current board state
+            current_board = self.board.copy()
+            
+            # Reinitialize the board with new orientation
+            self.__init__(self.parent)
+            self.board = current_board
+            
+        self.update_board()
+    
+    def get_square_position(self, row, col):
+        """Get the actual board position based on whether the board is flipped."""
+        if self.flipped:
+            return chess.square(7-col, row)  # Flip both row and column
+        else:
+            return chess.square(col, 7-row)  # Normal orientation
     
     def square_clicked(self, row, col):
         # Get the actual board position
@@ -187,7 +270,198 @@ class ChessGUI(QMainWindow):
         self.redo_stack = []  # Stack to store undone moves for redo
         self.hint_move = None  # Store the current hint move
         self.playing_as_white = True  # Track which side the player is on
+        
+        # Settings with default values
+        self.settings = {
+            'game': {
+                'show_legal_moves': True,
+                'show_coordinates': False,
+            },
+            'visual': {
+                'board_theme': 'Classic Green',
+                'colors': {
+                    'Classic Green': {'light': "#FFFFFF", 'dark': "#769656"},
+                    'Blue': {'light': "#FFFFFF", 'dark': "#4B7399"},
+                    'Brown': {'light': "#EEEED2", 'dark': "#B58863"},
+                    'custom': {'light': "#FFFFFF", 'dark': "#769656"}
+                },
+                'highlight_colors': {
+                    'legal_moves': "#00FF00",
+                    'selected_piece': "#FFFF00",
+                    'last_move': "#0000FF",
+                    'check': "#FF0000"
+                }
+            },
+            'engine': {
+                'model_path': engine_path,
+                'eval_threshold': 0.1,
+                'show_top_n': 3,
+                'show_probabilities': True,
+                'show_evaluation': True
+            }
+        }
+        
         self.init_ui()
+        self.create_menus()
+    
+    def create_menus(self):
+        # Create menu bar
+        menubar = self.menuBar()
+        
+        # Settings Menu
+        settings_menu = menubar.addMenu('Settings')
+        
+        # Game Settings Submenu
+        game_menu = settings_menu.addMenu('Game')
+        
+        # Show Legal Moves
+        show_legal_moves = game_menu.addAction('Show Legal Moves')
+        show_legal_moves.setCheckable(True)
+        show_legal_moves.setChecked(self.settings['game']['show_legal_moves'])
+        show_legal_moves.triggered.connect(lambda x: self.toggle_setting('game', 'show_legal_moves'))
+        
+        # Show Coordinates
+        show_coordinates = game_menu.addAction('Show Coordinates')
+        show_coordinates.setCheckable(True)
+        show_coordinates.setChecked(self.settings['game']['show_coordinates'])
+        show_coordinates.triggered.connect(lambda x: self.toggle_setting('game', 'show_coordinates'))
+        
+        # Visual Settings Submenu
+        visual_menu = settings_menu.addMenu('Visual')
+        
+        # Board Theme Submenu
+        theme_menu = visual_menu.addMenu('Board Theme')
+        theme_group = QActionGroup(self)
+        
+        for theme in ['Classic Green', 'Blue', 'Brown', 'Custom Colors']:
+            theme_action = theme_menu.addAction(theme)
+            theme_action.setCheckable(True)
+            theme_action.setChecked(self.settings['visual']['board_theme'] == theme)
+            theme_group.addAction(theme_action)
+            theme_action.triggered.connect(lambda x, t=theme: self.change_theme(t))
+        
+        # Move Highlight Colors Submenu
+        highlight_menu = visual_menu.addMenu('Move Highlight Colors')
+        
+        for highlight_type, color in self.settings['visual']['highlight_colors'].items():
+            action = highlight_menu.addAction(f'Set {highlight_type.replace("_", " ").title()} Color')
+            action.triggered.connect(lambda x, h=highlight_type: self.choose_highlight_color(h))
+        
+        # AI/Engine Settings Submenu
+        engine_menu = settings_menu.addMenu('AI/Engine')
+        
+        # Model Selection
+        select_model = engine_menu.addAction('Select Model File')
+        select_model.triggered.connect(self.select_model_file)
+        
+        # Engine Settings Submenu
+        engine_settings = engine_menu.addMenu('Engine Settings')
+        
+        # Evaluation Threshold
+        eval_threshold = engine_settings.addAction('Set Evaluation Threshold')
+        eval_threshold.triggered.connect(self.set_eval_threshold)
+        
+        # Show Top N Moves
+        top_n = engine_settings.addAction('Set Top N Moves')
+        top_n.triggered.connect(self.set_top_n_moves)
+        
+        # Show Move Probabilities
+        show_probs = engine_settings.addAction('Show Move Probabilities')
+        show_probs.setCheckable(True)
+        show_probs.setChecked(self.settings['engine']['show_probabilities'])
+        show_probs.triggered.connect(lambda x: self.toggle_setting('engine', 'show_probabilities'))
+        
+        # Show Position Evaluation
+        show_eval = engine_settings.addAction('Show Position Evaluation')
+        show_eval.setCheckable(True)
+        show_eval.setChecked(self.settings['engine']['show_evaluation'])
+        show_eval.triggered.connect(lambda x: self.toggle_setting('engine', 'show_evaluation'))
+    
+    def toggle_setting(self, category, setting):
+        """Toggle a boolean setting."""
+        self.settings[category][setting] = not self.settings[category][setting]
+        self.apply_settings()
+    
+    def change_theme(self, theme):
+        """Change the board theme."""
+        self.settings['visual']['board_theme'] = theme
+        if theme == 'Custom Colors':
+            self.choose_custom_colors()
+        self.apply_settings()
+    
+    def choose_custom_colors(self):
+        """Open color picker for custom board colors."""
+        light = QColorDialog.getColor(QColor(self.settings['visual']['colors']['custom']['light']))
+        if light.isValid():
+            dark = QColorDialog.getColor(QColor(self.settings['visual']['colors']['custom']['dark']))
+            if dark.isValid():
+                self.settings['visual']['colors']['custom']['light'] = light.name()
+                self.settings['visual']['colors']['custom']['dark'] = dark.name()
+                self.apply_settings()
+    
+    def choose_highlight_color(self, highlight_type):
+        """Open color picker for highlight colors."""
+        color = QColorDialog.getColor(QColor(self.settings['visual']['highlight_colors'][highlight_type]))
+        if color.isValid():
+            self.settings['visual']['highlight_colors'][highlight_type] = color.name()
+            self.apply_settings()
+    
+    def select_model_file(self):
+        """Open file dialog to select a model file."""
+        file_name, _ = QFileDialog.getOpenFileName(self, "Select Model File", "", "Model Files (*.pt)")
+        if file_name:
+            self.settings['engine']['model_path'] = file_name
+            self.engine = ChessEngine(file_name)
+    
+    def set_eval_threshold(self):
+        """Open dialog to set evaluation threshold."""
+        value, ok = QInputDialog.getDouble(self, "Set Evaluation Threshold", 
+                                         "Enter threshold value (0.0 - 1.0):",
+                                         self.settings['engine']['eval_threshold'],
+                                         0.0, 1.0, 2)
+        if ok:
+            self.settings['engine']['eval_threshold'] = value
+    
+    def set_top_n_moves(self):
+        """Open dialog to set number of top moves to show."""
+        value, ok = QInputDialog.getInt(self, "Set Top N Moves", 
+                                      "Enter number of moves to show:",
+                                      self.settings['engine']['show_top_n'],
+                                      1, 10)
+        if ok:
+            self.settings['engine']['show_top_n'] = value
+    
+    def apply_settings(self):
+        """Apply the current settings to the GUI."""
+        # Update board colors
+        theme = self.settings['visual']['board_theme']
+        colors = self.settings['visual']['colors'][theme if theme != 'Custom Colors' else 'custom']
+        
+        # Rebuild board if coordinates setting changed
+        self.rebuild_board()
+        
+        # Update board display
+        self.board_widget.update_board()
+        
+        # Update evaluation display
+        self.eval_label.setVisible(self.settings['engine']['show_evaluation'])
+    
+    def rebuild_board(self):
+        """Rebuild the board layout to show/hide coordinates."""
+        # Store current board state and orientation
+        current_board = self.board_widget.board.copy()
+        current_flipped = self.board_widget.flipped
+        
+        # Create new board with current settings
+        self.board_widget = ChessBoard(self)
+        self.board_widget.board = current_board
+        self.board_widget.flipped = current_flipped
+        self.board_widget.move_made.connect(self.on_player_move)
+        
+        # Replace old board widget in layout
+        old_board = self.centralWidget().layout().itemAt(0).widget()
+        self.centralWidget().layout().replaceWidget(old_board, self.board_widget)
+        old_board.deleteLater()
     
     def init_ui(self):
         self.setWindowTitle('Chess AI GUI')
@@ -197,7 +471,7 @@ class ChessGUI(QMainWindow):
         layout = QHBoxLayout()
         
         # Create chess board
-        self.board_widget = ChessBoard()
+        self.board_widget = ChessBoard(self)  # Pass self as parent
         self.board_widget.move_made.connect(self.on_player_move)
         layout.addWidget(self.board_widget)
         
@@ -292,15 +566,16 @@ class ChessGUI(QMainWindow):
         self.eval_label.setText(f'Evaluation: {value:.3f}')
         
         if best_move:
-            # Store move text before making the move
+            # Store move text and algebraic notation before making the move
             ai_move_text = self.board_widget.board.san(best_move)
+            ai_move_uci = best_move.uci()
             # Make the move
             self.board_widget.board.push(best_move)
             # Add AI move to stack
             self.move_stack.append(best_move)
-            # Update history with stored text
+            # Update history with stored text and algebraic notation
             prefix = "White: " if self.board_widget.board.turn == chess.BLACK else "Black: "
-            self.move_history.append(f"{prefix}{ai_move_text}\n")
+            self.move_history.append(f"{prefix}{ai_move_text} ({ai_move_uci})\n")
             self.board_widget.update_board()
             return True
         return False
@@ -329,20 +604,18 @@ class ChessGUI(QMainWindow):
                     to_row = 7 - chess.square_rank(to_square)
                     to_col = chess.square_file(to_square)
                 
-                # Clear previous highlights
+                # Update all squares with current theme colors
                 for row in range(8):
                     for col in range(8):
                         square = self.board_widget.squares[row][col]
-                        if (row, col) not in [(from_row, from_col), (to_row, to_col)]:
-                            square.setStyleSheet(square._get_background_color())
-                
-                # Highlight the from and to squares
-                self.board_widget.squares[from_row][from_col].setStyleSheet(
-                    f"{self.board_widget.squares[from_row][from_col]._get_background_color()} border: 2px solid #0000FF;"
-                )
-                self.board_widget.squares[to_row][to_col].setStyleSheet(
-                    f"{self.board_widget.squares[to_row][to_col]._get_background_color()} border: 2px solid #0000FF;"
-                )
+                        base_color = self.board_widget._get_square_color(row, col)
+                        if (row, col) in [(from_row, from_col), (to_row, to_col)]:
+                            # Highlight hint squares using the last move highlight color
+                            square.setStyleSheet(
+                                f"background-color: {base_color}; border: 2px solid {self.settings['visual']['highlight_colors']['last_move']};"
+                            )
+                        else:
+                            square.setStyleSheet(f"background-color: {base_color};")
     
     def update_button_states(self):
         self.undo_btn.setEnabled(len(self.move_stack) > 0)
@@ -364,6 +637,7 @@ class ChessGUI(QMainWindow):
         
         # Make the player's move on a fresh board copy
         self.board_widget.board = board_before_move.copy()
+        move_uci = move.uci()  # Get algebraic notation
         self.board_widget.board.push(move)
         self.board_widget.update_board()
         
@@ -371,9 +645,9 @@ class ChessGUI(QMainWindow):
         self.redo_stack.clear()
         # Add move to stack
         self.move_stack.append(move)
-        # Update move history with pre-computed move text
+        # Update move history with move text and algebraic notation
         prefix = "White: " if self.playing_as_white else "Black: "
-        self.move_history.append(f"{prefix}{move_text}")
+        self.move_history.append(f"{prefix}{move_text} ({move_uci})")
         
         if not self.board_widget.board.is_game_over():
             # AI's turn
@@ -422,17 +696,19 @@ class ChessGUI(QMainWindow):
             player_move = self.redo_stack.pop()
             self.move_stack.append(player_move)
             move_text = self.board_widget.board.san(player_move)
+            move_uci = player_move.uci()
             self.board_widget.board.push(player_move)
             prefix = "White: " if self.playing_as_white else "Black: "
-            self.move_history.append(f"{prefix}{move_text}")
+            self.move_history.append(f"{prefix}{move_text} ({move_uci})")
             
             # Redo AI move
             ai_move = self.redo_stack.pop()
             self.move_stack.append(ai_move)
             move_text = self.board_widget.board.san(ai_move)
+            move_uci = ai_move.uci()
             self.board_widget.board.push(ai_move)
             prefix = "Black: " if self.playing_as_white else "White: "
-            self.move_history.append(f"{prefix}{move_text}\n")
+            self.move_history.append(f"{prefix}{move_text} ({move_uci})\n")
             
             self.board_widget.update_board()
             self.update_button_states()
