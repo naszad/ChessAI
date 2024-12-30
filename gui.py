@@ -1,9 +1,9 @@
 import sys
 import chess
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                            QHBoxLayout, QLabel, QPushButton, QTextEdit, QColorDialog, QFileDialog, QInputDialog)
+                            QHBoxLayout, QLabel, QPushButton, QTextEdit, QColorDialog, QFileDialog, QInputDialog, QTabWidget, QGroupBox, QSpinBox)
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QFont, QActionGroup
-from PyQt6.QtCore import Qt, QRect, QSize, pyqtSignal
+from PyQt6.QtCore import Qt, QRect, QSize, pyqtSignal, QTimer
 import os
 from inference import ChessEngine
 
@@ -265,11 +265,13 @@ class ChessBoard(QWidget):
 class ChessGUI(QMainWindow):
     def __init__(self, engine_path):
         super().__init__()
-        self.engine = ChessEngine(engine_path)
-        self.move_stack = []  # Stack to store moves for undo/redo
-        self.redo_stack = []  # Stack to store undone moves for redo
-        self.hint_move = None  # Store the current hint move
-        self.playing_as_white = True  # Track which side the player is on
+        # Create two engines for White and Black
+        self.white_engine = ChessEngine(engine_path)
+        self.black_engine = ChessEngine(engine_path)  # Initially same as white
+        self.move_stack = []
+        self.redo_stack = []
+        self.hint_move = None
+        self.playing_as_white = True
         
         # Settings with default values
         self.settings = {
@@ -293,7 +295,8 @@ class ChessGUI(QMainWindow):
                 }
             },
             'engine': {
-                'model_path': engine_path,
+                'white_model_path': engine_path,
+                'black_model_path': engine_path,
                 'eval_threshold': 0.1,
                 'show_top_n': 3,
                 'show_probabilities': True,
@@ -350,9 +353,13 @@ class ChessGUI(QMainWindow):
         # AI/Engine Settings Submenu
         engine_menu = settings_menu.addMenu('AI/Engine')
         
-        # Model Selection
-        select_model = engine_menu.addAction('Select Model File')
-        select_model.triggered.connect(self.select_model_file)
+        # White Model Selection
+        select_white_model = engine_menu.addAction('Select White Model')
+        select_white_model.triggered.connect(lambda: self.select_model_file('white'))
+        
+        # Black Model Selection
+        select_black_model = engine_menu.addAction('Select Black Model')
+        select_black_model.triggered.connect(lambda: self.select_model_file('black'))
         
         # Engine Settings Submenu
         engine_settings = engine_menu.addMenu('Engine Settings')
@@ -406,12 +413,23 @@ class ChessGUI(QMainWindow):
             self.settings['visual']['highlight_colors'][highlight_type] = color.name()
             self.apply_settings()
     
-    def select_model_file(self):
-        """Open file dialog to select a model file."""
-        file_name, _ = QFileDialog.getOpenFileName(self, "Select Model File", "", "Model Files (*.pt)")
+    def select_model_file(self, side):
+        """Open file dialog to select a model file for White or Black."""
+        file_name, _ = QFileDialog.getOpenFileName(
+            self, 
+            f"Select Model File for {side.title()}", 
+            "", 
+            "Model Files (*.pt)"
+        )
         if file_name:
-            self.settings['engine']['model_path'] = file_name
-            self.engine = ChessEngine(file_name)
+            if side == 'white':
+                self.settings['engine']['white_model_path'] = file_name
+                self.white_engine = ChessEngine(file_name)
+                self.white_model_label.setText(f"Model: {os.path.basename(file_name)}")
+            else:
+                self.settings['engine']['black_model_path'] = file_name
+                self.black_engine = ChessEngine(file_name)
+                self.black_model_label.setText(f"Model: {os.path.basename(file_name)}")
     
     def set_eval_threshold(self):
         """Open dialog to set evaluation threshold."""
@@ -475,7 +493,7 @@ class ChessGUI(QMainWindow):
         self.board_widget.move_made.connect(self.on_player_move)
         layout.addWidget(self.board_widget)
         
-        # Create side panel
+        # Create side panel with tabs
         side_panel = QWidget()
         side_layout = QVBoxLayout()
         
@@ -491,45 +509,122 @@ class ChessGUI(QMainWindow):
         self.hint_label = QLabel('')
         side_layout.addWidget(self.hint_label)
         
+        # Create tab widget
+        tab_widget = QTabWidget()
+        
+        # Move History Tab
+        history_tab = QWidget()
+        history_layout = QVBoxLayout()
+        
         # Move history
         self.move_history = QTextEdit()
         self.move_history.setReadOnly(True)
-        side_layout.addWidget(QLabel('Move History:'))
-        side_layout.addWidget(self.move_history)
+        history_layout.addWidget(QLabel('Move History:'))
+        history_layout.addWidget(self.move_history)
         
-        # Button layouts
-        top_button_layout = QHBoxLayout()
-        bottom_button_layout = QHBoxLayout()
+        history_tab.setLayout(history_layout)
+        tab_widget.addTab(history_tab, "Move History")
+        
+        # Self-Play Tab
+        self_play_tab = QWidget()
+        self_play_layout = QVBoxLayout()
+        
+        # White Model Group
+        white_group = QGroupBox("White Player")
+        white_layout = QVBoxLayout()
+        
+        # White model display and select button
+        self.white_model_label = QLabel(f"Model: {os.path.basename(self.settings['engine']['white_model_path'])}")
+        white_layout.addWidget(self.white_model_label)
+        
+        select_white_btn = QPushButton('Select Model')
+        select_white_btn.clicked.connect(lambda: self.select_model_file('white'))
+        white_layout.addWidget(select_white_btn)
+        
+        white_group.setLayout(white_layout)
+        self_play_layout.addWidget(white_group)
+        
+        # Black Model Group
+        black_group = QGroupBox("Black Player")
+        black_layout = QVBoxLayout()
+        
+        # Black model display and select button
+        self.black_model_label = QLabel(f"Model: {os.path.basename(self.settings['engine']['black_model_path'])}")
+        black_layout.addWidget(self.black_model_label)
+        
+        select_black_btn = QPushButton('Select Model')
+        select_black_btn.clicked.connect(lambda: self.select_model_file('black'))
+        black_layout.addWidget(select_black_btn)
+        
+        black_group.setLayout(black_layout)
+        self_play_layout.addWidget(black_group)
+        
+        # Self-Play Controls
+        controls_group = QGroupBox("Controls")
+        controls_layout = QVBoxLayout()
+        
+        # Move delay control
+        delay_layout = QHBoxLayout()
+        delay_layout.addWidget(QLabel('Move Delay (ms):'))
+        self.delay_spinbox = QSpinBox()
+        self.delay_spinbox.setRange(0, 5000)
+        self.delay_spinbox.setValue(500)  # Default 500ms delay
+        self.delay_spinbox.setSingleStep(100)
+        delay_layout.addWidget(self.delay_spinbox)
+        controls_layout.addLayout(delay_layout)
+        
+        # Start/Stop button
+        self.self_play_btn = QPushButton('Start Self-Play')
+        self.self_play_btn.clicked.connect(self.toggle_self_play)
+        controls_layout.addWidget(self.self_play_btn)
+        
+        controls_group.setLayout(controls_layout)
+        self_play_layout.addWidget(controls_group)
+        
+        # Add spacer at the bottom
+        self_play_layout.addStretch()
+        
+        self_play_tab.setLayout(self_play_layout)
+        tab_widget.addTab(self_play_tab, "Self-Play")
+        
+        side_layout.addWidget(tab_widget)
+        
+        # Button layouts for main controls
+        button_layout = QHBoxLayout()
         
         # New Game button
         new_game_btn = QPushButton('New Game')
         new_game_btn.clicked.connect(self.new_game)
-        top_button_layout.addWidget(new_game_btn)
+        button_layout.addWidget(new_game_btn)
         
         # Switch Sides button
         self.switch_sides_btn = QPushButton('Switch to Black')
         self.switch_sides_btn.clicked.connect(self.switch_sides)
-        top_button_layout.addWidget(self.switch_sides_btn)
+        button_layout.addWidget(self.switch_sides_btn)
+        
+        side_layout.addLayout(button_layout)
+        
+        # Undo/Redo/Hint buttons
+        control_layout = QHBoxLayout()
         
         # Undo button
         self.undo_btn = QPushButton('Undo')
         self.undo_btn.clicked.connect(self.undo_move)
         self.undo_btn.setEnabled(False)
-        bottom_button_layout.addWidget(self.undo_btn)
+        control_layout.addWidget(self.undo_btn)
         
         # Redo button
         self.redo_btn = QPushButton('Redo')
         self.redo_btn.clicked.connect(self.redo_move)
         self.redo_btn.setEnabled(False)
-        bottom_button_layout.addWidget(self.redo_btn)
+        control_layout.addWidget(self.redo_btn)
         
         # Hint button
         self.hint_btn = QPushButton('Hint')
         self.hint_btn.clicked.connect(self.show_hint)
-        bottom_button_layout.addWidget(self.hint_btn)
+        control_layout.addWidget(self.hint_btn)
         
-        side_layout.addLayout(top_button_layout)
-        side_layout.addLayout(bottom_button_layout)
+        side_layout.addLayout(control_layout)
         
         side_panel.setLayout(side_layout)
         layout.addWidget(side_panel)
@@ -538,6 +633,10 @@ class ChessGUI(QMainWindow):
         self.setCentralWidget(central_widget)
         
         self.resize(1200, 800)
+        
+        # Add self-play timer
+        self.self_play_timer = None
+        self.is_self_playing = False
     
     def switch_sides(self):
         self.playing_as_white = not self.playing_as_white
@@ -562,7 +661,9 @@ class ChessGUI(QMainWindow):
             self.make_ai_move()
     
     def make_ai_move(self):
-        value, best_move, move_probs = self.engine.evaluate_position(self.board_widget.board)
+        # Use appropriate engine based on current turn
+        engine = self.white_engine if self.board_widget.board.turn == chess.WHITE else self.black_engine
+        value, best_move, move_probs = engine.evaluate_position(self.board_widget.board)
         self.eval_label.setText(f'Evaluation: {value:.3f}')
         
         if best_move:
@@ -582,7 +683,9 @@ class ChessGUI(QMainWindow):
     
     def show_hint(self):
         if not self.board_widget.board.is_game_over() and self.board_widget.board.turn == (chess.WHITE if self.playing_as_white else chess.BLACK):
-            value, best_move, move_probs = self.engine.evaluate_position(self.board_widget.board)
+            # Use appropriate engine based on current turn
+            engine = self.white_engine if self.board_widget.board.turn == chess.WHITE else self.black_engine
+            value, best_move, move_probs = engine.evaluate_position(self.board_widget.board)
             if best_move:
                 move_text = self.board_widget.board.san(best_move)
                 self.hint_label.setText(f'Suggested move: {move_text}')
@@ -716,6 +819,79 @@ class ChessGUI(QMainWindow):
             # Update evaluation
             value, _, _ = self.engine.evaluate_position(self.board_widget.board)
             self.eval_label.setText(f'Evaluation: {value:.3f}')
+    
+    def toggle_self_play(self):
+        """Toggle AI self-play mode."""
+        if not self.self_play_timer:
+            # Create timer if it doesn't exist
+            from PyQt6.QtCore import QTimer
+            self.self_play_timer = QTimer()
+            self.self_play_timer.timeout.connect(self.make_self_play_move)
+        
+        if not self.is_self_playing:
+            # Start self-play
+            self.is_self_playing = True
+            self.self_play_btn.setText('Stop Self-Play')
+            self.switch_sides_btn.setEnabled(False)
+            self.hint_btn.setEnabled(False)
+            self.delay_spinbox.setEnabled(False)
+            self.undo_btn.setEnabled(False)
+            self.redo_btn.setEnabled(False)
+            
+            # Start timer with current delay
+            self.self_play_timer.start(self.delay_spinbox.value())
+            
+            # Make first move if it's AI's turn
+            if not self.board_widget.board.is_game_over():
+                self.make_self_play_move()
+        else:
+            # Stop self-play
+            self.stop_self_play()
+    
+    def stop_self_play(self):
+        """Stop AI self-play mode."""
+        if self.self_play_timer:
+            self.self_play_timer.stop()
+        self.is_self_playing = False
+        self.self_play_btn.setText('Start Self-Play')
+        self.switch_sides_btn.setEnabled(True)
+        self.hint_btn.setEnabled(True)
+        self.delay_spinbox.setEnabled(True)
+        self.update_button_states()
+    
+    def make_self_play_move(self):
+        """Make a move in self-play mode."""
+        if not self.board_widget.board.is_game_over():
+            # Use appropriate engine based on current turn
+            engine = self.white_engine if self.board_widget.board.turn == chess.WHITE else self.black_engine
+            value, best_move, move_probs = engine.evaluate_position(self.board_widget.board)
+            
+            if best_move:
+                # Store move text before making the move
+                move_text = self.board_widget.board.san(best_move)
+                move_uci = best_move.uci()
+                
+                # Make the move
+                self.board_widget.board.push(best_move)
+                self.move_stack.append(best_move)
+                
+                # Update move history
+                prefix = "White: " if self.board_widget.board.turn == chess.BLACK else "Black: "
+                self.move_history.append(f"{prefix}{move_text} ({move_uci})\n")
+                
+                # Update evaluation
+                self.eval_label.setText(f'Evaluation: {value:.3f}')
+                
+                # Update display
+                self.board_widget.update_board()
+                
+                # Stop if game is over
+                if self.board_widget.board.is_game_over():
+                    result = self.board_widget.board.result()
+                    self.move_history.append(f"\nGame Over! Result: {result}")
+                    self.stop_self_play()
+        else:
+            self.stop_self_play()
 
 def main():
     app = QApplication(sys.argv)
