@@ -1,7 +1,7 @@
 import os
 
-# Change this to your flash drive letter (e.g., "E:", "F:", etc.)
-FLASH_DRIVE = "D:"
+# Path to external hard drive
+FLASH_DRIVE = "/media/parmenides/MyPassport"
 
 # Project directories
 PROJECT_ROOT = os.path.join(FLASH_DRIVE, "ChessAI")
