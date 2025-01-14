@@ -74,7 +74,7 @@ def run_command(cmd, description):
 
 def main():
     parser = argparse.ArgumentParser(description="Automated chess model training pipeline")
-    parser.add_argument('--months', type=int, default=3,
+    parser.add_argument('--months', type=int, default=6,
                         help='Number of previous months of data to download')
     parser.add_argument('--min_elo', type=int, default=2000,
                         help='Minimum Elo rating for games')
@@ -115,7 +115,7 @@ def main():
             "--month", month,
             "--output-dir", month_dir,
             "--min-elo", str(args.min_elo),
-            "--max-games", "10000"  # Limit to 10,000 games per month
+            "--max-games", "100000"  # Limit to 10,000 games per month
         ]
         
         if not run_command(download_cmd, f"Downloading games for {month}"):
