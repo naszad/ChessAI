@@ -903,7 +903,7 @@ def main():
         print("Please add chess piece images to the 'pieces' directory")
         return
     
-    engine_path = "D:/ChessAI/checkpoints/model_epoch_20.pt"  # Update this path
+    engine_path = "models/model_epoch_20.pt"  # Updated path to use local directory
     gui = ChessGUI(engine_path)
     gui.show()
     sys.exit(app.exec())
