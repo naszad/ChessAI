@@ -123,10 +123,10 @@ def train(args):
                 for i, idx in enumerate(move_indices):
                     policies[i, idx] = 1.0
                 
-                # Move data to device
-                positions = positions.to(device)
+                # Move data to device and ensure correct dtype
+                positions = positions.to(device).float()  # Ensure float32
                 policies = policies.to(device)
-                values = values.to(device)
+                values = values.to(device).float().view(-1, 1)  # Reshape to [batch_size, 1] and ensure float32
                 
                 # Forward pass
                 value_pred, policy_pred = model(positions)

@@ -92,15 +92,17 @@ class ChessNet(nn.Module):
 def value_loss_fn(pred_values, target_values):
     """
     Compute MSE loss for the value head.
+    Ensures both inputs have shape [batch_size, 1] and dtype float32.
     """
+    pred_values = pred_values.float().view(-1, 1)
+    target_values = target_values.float().view(-1, 1)
     return F.mse_loss(pred_values, target_values)
 
 def policy_loss_fn(policy_logits, target_moves):
     """
     Compute cross-entropy loss for the policy head.
-    
-    Args:
-        policy_logits: Raw logits from the policy head
-        target_moves: One-hot encoded target moves
+    Ensures both inputs have correct shape and dtype float32.
     """
-    return F.cross_entropy(policy_logits, torch.argmax(target_moves, dim=1))
+    policy_logits = policy_logits.float()
+    target_moves = target_moves.float()
+    return F.cross_entropy(policy_logits, target_moves)
