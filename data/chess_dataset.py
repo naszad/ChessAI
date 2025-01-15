@@ -82,11 +82,17 @@ class ChessDataset(Dataset):
         return len(self.samples)
     
     def __getitem__(self, idx):
-        sample = self.samples[idx]
+        # Unpack the tuple
+        encoded_board, move_index, value = self.samples[idx]
         
         # Convert to tensors
-        position = torch.tensor(sample['position'], dtype=torch.float32)
-        policy = torch.tensor(sample['policy'], dtype=torch.float32)
-        value = torch.tensor([sample['value']], dtype=torch.float32)
+        position = torch.tensor(encoded_board, dtype=torch.float32)
+        
+        # Create one-hot policy vector
+        policy = torch.zeros(4096, dtype=torch.float32)
+        policy[move_index] = 1.0
+        
+        # Create value tensor
+        value = torch.tensor([value], dtype=torch.float32)
         
         return position, policy, value
