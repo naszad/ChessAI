@@ -31,11 +31,17 @@ class ChessDataset(Dataset):
                 continue
             
             print(f"\nProcessing file: {pgn_path}")
-            game_count = 0
             position_count = 0
-                
+            
+            # First count the number of games in the file
+            game_count = 0
             with open(pgn_path) as pgn:
-                while True:
+                while chess.pgn.read_game(pgn) is not None:
+                    game_count += 1
+            
+            # Now process the games with a progress bar
+            with open(pgn_path) as pgn:
+                for _ in tqdm(range(game_count), desc="Processing games", unit="game"):
                     if max_positions and num_positions >= max_positions:
                         print(f"Reached maximum positions limit: {max_positions}")
                         return
@@ -43,10 +49,6 @@ class ChessDataset(Dataset):
                     game = chess.pgn.read_game(pgn)
                     if game is None:
                         break
-                    
-                    game_count += 1
-                    if game_count % 100 == 0:
-                        print(f"Processed {game_count} games, {position_count} positions from current file")
                     
                     # Extract result
                     result = game.headers.get("Result", "*")
@@ -74,7 +76,7 @@ class ChessDataset(Dataset):
                             print(f"Reached maximum positions limit: {max_positions}")
                             return
             
-            print(f"Completed file {pgn_path}: {game_count} games, {position_count} positions")
+            print(f"Completed file: {position_count} positions extracted")
         
         print(f"\nFinished loading dataset: {len(self.samples)} total positions from {len(pgn_files)} files")
     
