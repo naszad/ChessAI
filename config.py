@@ -1,7 +1,19 @@
 import os
+import subprocess
+
+def get_hdd_path():
+    """Get the path to the external HDD using its label."""
+    label = "My Passport"
+    base_path = f"/media/parmenides/{label}"
+    
+    # Check if the drive is mounted
+    if not os.path.ismount(base_path):
+        raise RuntimeError(f"External HDD '{label}' is not mounted. Please ensure it is connected and mounted.")
+    
+    return base_path
 
 # Path to external hard drive
-FLASH_DRIVE = "/media/parmenides/MyPassport"
+FLASH_DRIVE = get_hdd_path()
 
 # Project directories
 PROJECT_ROOT = os.path.join(FLASH_DRIVE, "ChessAI")
@@ -18,4 +30,4 @@ for directory in [PROJECT_ROOT, DATA_DIR, GAMES_DIR, MODELS_DIR, CHECKPOINTS_DIR
 # File paths
 FILTERED_GAMES_PATH = os.path.join(GAMES_DIR, "lichess_games_filtered.pgn")
 RAW_GAMES_PATH = os.path.join(GAMES_DIR, "lichess_games_raw.pgn")
-COMPRESSED_GAMES_PATH = os.path.join(GAMES_DIR, "lichess_games.pgn.zst") 
+COMPRESSED_GAMES_PATH = os.path.join(GAMES_DIR, "lichess_games.pgn.zst")
