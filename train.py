@@ -68,15 +68,18 @@ def train(args):
     
     # Create data loader
     print("\nCreating data loader...")
-    print("Using single-threaded data loading for debugging")
+    if args.num_workers > 0:
+        print(f"Using {args.num_workers} worker threads")
+    else:
+        print("Using single-threaded data loading")
     
     try:
         dataloader = DataLoader(
             dataset,
             batch_size=args.batch_size,
-            shuffle=True,
-            num_workers=0,  # Single-threaded
-            pin_memory=False  # Disable pin_memory when using CPU
+            shuffle=False,  # Shuffle is not supported for IterableDataset
+            num_workers=args.num_workers,
+            pin_memory=torch.cuda.is_available() and not args.cpu
         )
         print(f"Number of batches: {len(dataloader):,}")
         
@@ -84,7 +87,14 @@ def train(args):
         print("\nTesting data loading...")
         test_iter = iter(dataloader)
         try:
-            positions, policies, values = next(test_iter)
+            batch = next(test_iter)
+            positions, move_indices, values = batch
+            
+            # Convert move indices to one-hot policy vectors
+            policies = torch.zeros(move_indices.shape[0], 4096, dtype=torch.float32)
+            for i, idx in enumerate(move_indices):
+                policies[i, idx] = 1.0
+            
             print(f"Successfully loaded first batch:")
             print(f"  Positions shape: {positions.shape}")
             print(f"  Policies shape: {policies.shape}")
@@ -98,65 +108,51 @@ def train(args):
         print(f"Training from epoch {start_epoch + 1} to {start_epoch + args.epochs}")
         
         for epoch in range(start_epoch, start_epoch + args.epochs):
-            print(f"\nStarting epoch {epoch + 1}...")
             model.train()
             total_loss = 0
-            total_value_loss = 0
-            total_policy_loss = 0
+            value_losses = 0
+            policy_losses = 0
             num_batches = 0
             
-            progress_bar = tqdm(
-                dataloader,
-                desc=f"Epoch {epoch+1}/{start_epoch + args.epochs}",
-                ncols=100,
-                leave=True
-            )
-            
-            try:
-                for batch_idx, (positions, policies, values) in enumerate(progress_bar):
-                    if batch_idx == 0:
-                        print(f"First batch loaded successfully")
-                    
-                    # Move data to device
-                    positions = positions.to(device)
-                    policies = policies.to(device)
-                    values = values.to(device)
-                    
-                    # Forward pass
-                    pred_values, pred_policies = model(positions)
-                    
-                    # Compute losses
-                    v_loss = value_loss_fn(pred_values, values)
-                    p_loss = policy_loss_fn(pred_policies, policies)
-                    loss = v_loss + p_loss
-                    
-                    # Backward pass
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
-                    
-                    # Update statistics
-                    total_loss += loss.item()
-                    total_value_loss += v_loss.item()
-                    total_policy_loss += p_loss.item()
-                    num_batches += 1
-                    
-                    # Update progress bar
-                    progress_bar.set_postfix({
-                        'loss': f'{total_loss / num_batches:.4f}',
-                        'v_loss': f'{total_value_loss / num_batches:.4f}',
-                        'p_loss': f'{total_policy_loss / num_batches:.4f}'
-                    })
-                    
-                    if batch_idx % 100 == 0:
-                        print(f"\nBatch {batch_idx}/{len(dataloader)}, "
-                              f"Loss: {total_loss / num_batches:.4f}, "
-                              f"Value Loss: {total_value_loss / num_batches:.4f}, "
-                              f"Policy Loss: {total_policy_loss / num_batches:.4f}")
+            progress_bar = tqdm(dataloader, desc=f"Epoch {epoch + 1}")
+            for batch in progress_bar:
+                positions, move_indices, values = batch
                 
-            except Exception as e:
-                print(f"\nError during training: {str(e)}")
-                raise e
+                # Convert move indices to one-hot policy vectors
+                policies = torch.zeros(move_indices.shape[0], 4096, dtype=torch.float32)
+                for i, idx in enumerate(move_indices):
+                    policies[i, idx] = 1.0
+                
+                # Move data to device
+                positions = positions.to(device)
+                policies = policies.to(device)
+                values = values.to(device)
+                
+                # Forward pass
+                value_pred, policy_pred = model(positions)
+                
+                # Calculate losses
+                value_loss = value_loss_fn(value_pred, values)
+                policy_loss = policy_loss_fn(policy_pred, policies)
+                loss = value_loss + policy_loss
+                
+                # Backward pass
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                
+                # Update metrics
+                total_loss += loss.item()
+                value_losses += value_loss.item()
+                policy_losses += policy_loss.item()
+                num_batches += 1
+                
+                # Update progress bar
+                progress_bar.set_postfix({
+                    'loss': f"{total_loss/num_batches:.4f}",
+                    'value_loss': f"{value_losses/num_batches:.4f}",
+                    'policy_loss': f"{policy_losses/num_batches:.4f}"
+                })
             
             # Step learning rate scheduler
             scheduler.step()
