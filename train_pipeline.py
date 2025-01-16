@@ -13,32 +13,21 @@ from tqdm import tqdm
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from config import GAMES_DIR, CHECKPOINTS_DIR, FILTERED_GAMES_PATH
 
-def get_previous_months(num_months):
-    """Get a list of previous months in YYYY-MM format."""
-    current_date = datetime.now()
-    
-    # Always start from two months ago to ensure data availability
-    current_date = current_date.replace(day=1)  # First of current month
-    current_date = current_date - timedelta(days=1)  # Last day of previous month
-    current_date = current_date.replace(day=1)  # First of previous month
-    current_date = current_date - timedelta(days=1)  # Last day of two months ago
-    
+def get_downloaded_months():
+    """Get a list of months that have already been downloaded and filtered."""
     months = []
-    for i in range(num_months):
-        year = current_date.year
-        month = current_date.month
-        months.append(f"{year}-{month:02d}")  # Ensure two-digit month format
-        
-        # Move to previous month
-        if month == 1:
-            month = 12
-            year -= 1
-        else:
-            month -= 1
-        current_date = current_date.replace(year=year, month=month, day=1)
+    
+    # Look for directories in GAMES_DIR that match YYYY-MM format
+    for item in os.listdir(GAMES_DIR):
+        dir_path = os.path.join(GAMES_DIR, item)
+        if os.path.isdir(dir_path) and len(item) == 7 and item[4] == '-':
+            # Check if filtered PGN file exists in this directory
+            filtered_pgn = os.path.join(dir_path, 'lichess_games_filtered.pgn')
+            if os.path.exists(filtered_pgn):
+                months.append(item)
     
     # Sort chronologically from oldest to newest
-    months.reverse()
+    months.sort()
     return months
 
 def run_command(cmd, description):
@@ -73,112 +62,64 @@ def run_command(cmd, description):
         return False
 
 def main():
-    parser = argparse.ArgumentParser(description="Automated chess model training pipeline")
-    parser.add_argument('--months', type=int, default=6,
-                        help='Number of previous months of data to download')
-    parser.add_argument('--min_elo', type=int, default=2000,
-                        help='Minimum Elo rating for games')
+    parser = argparse.ArgumentParser(description="Train chess model pipeline")
+    
+    # Training arguments
+    parser.add_argument('--batch_size', type=int, default=32,
+                        help='Batch size for training')
     parser.add_argument('--epochs', type=int, default=10,
                         help='Number of epochs to train')
-    parser.add_argument('--batch_size', type=int, default=256,
-                        help='Batch size for training')
-    parser.add_argument('--num_workers', type=int, default=4,
+    parser.add_argument('--num_workers', type=int, default=2,
                         help='Number of data loading workers')
-    parser.add_argument('--continue_training', action='store_true',
-                        help='Continue training from the last checkpoint')
+    parser.add_argument('--save_every', type=int, default=1,
+                        help='Save checkpoint every N epochs')
+    parser.add_argument('--max_positions', type=int, default=None,
+                        help='Maximum number of positions to load (for debugging)')
+    parser.add_argument('--resume_from', type=str,
+                        help='Path to checkpoint to resume from')
+    
     args = parser.parse_args()
-
-    print("\n=== Chess AI Training Pipeline ===")
-    print("=================================")
     
-    # Create necessary directories
-    os.makedirs(GAMES_DIR, exist_ok=True)
-    os.makedirs(CHECKPOINTS_DIR, exist_ok=True)
-
-    # Get list of months to download
-    months = get_previous_months(args.months)
-    print(f"\n[INFO] Will download and process data from months: {', '.join(months)}")
-
-    # Process each month
-    all_filtered_games = []
-    start_time = datetime.now()
-    
-    for i, month in enumerate(months, 1):
-        print(f"\n[INFO] Processing month {i}/{len(months)}: {month}")
-        month_dir = os.path.join(GAMES_DIR, month)
-        os.makedirs(month_dir, exist_ok=True)
-        
-        # Download and process the month's data
-        download_cmd = [
-            "python", "data/download_games.py",
-            "--download",
-            "--month", month,
-            "--output-dir", month_dir,
-            "--min-elo", str(args.min_elo),
-            "--max-games", "100000"  # Limit to 10,000 games per month
-        ]
-        
-        if not run_command(download_cmd, f"Downloading games for {month}"):
-            print(f"[WARN] Skipping {month} due to download error")
-            continue
-        
-        # If download was successful, the filtered games will be in the month directory
-        month_filtered_path = os.path.join(month_dir, "lichess_games_filtered.pgn")
-        if os.path.exists(month_filtered_path):
-            all_filtered_games.append(month_filtered_path)
-            file_size = os.path.getsize(month_filtered_path)
-            print(f"[OK] Successfully processed games for {month} ({humanize.naturalsize(file_size, binary=True)})")
-        else:
-            print(f"[ERROR] No filtered games found for {month}")
-
-    if not all_filtered_games:
-        print("\n[ERROR] No data was successfully processed. Aborting training.")
+    # Get list of downloaded months
+    months = get_downloaded_months()
+    if not months:
+        print("[ERROR] No downloaded and filtered game files found")
+        print("Please run download_games.py first")
         return
-
-    elapsed = datetime.now() - start_time
-    total_size = sum(os.path.getsize(f) for f in all_filtered_games)
     
-    print(f"\n[INFO] Data Processing Summary:")
-    print(f"  * Successfully processed {len(all_filtered_games)} months of data")
-    print(f"  * Total data size: {humanize.naturalsize(total_size, binary=True)}")
-    print(f"  * Processing time: {humanize.naturaldelta(elapsed)}")
-    print("\n[INFO] Processed months:")
-    for pgn in all_filtered_games:
-        month = os.path.basename(os.path.dirname(pgn))
-        size = os.path.getsize(pgn)
-        print(f"  * {month}: {humanize.naturalsize(size, binary=True)}")
-
-    # Find latest checkpoint if continuing training
-    latest_epoch = 0
-    if args.continue_training:
-        checkpoints = list(Path(CHECKPOINTS_DIR).glob("model_epoch_*.pt"))
-        if checkpoints:
-            latest_checkpoint = max(checkpoints, key=lambda x: int(str(x).split("_")[-1].split(".")[0]))
-            latest_epoch = int(str(latest_checkpoint).split("_")[-1].split(".")[0])
-            print(f"\n[INFO] Continuing training from epoch {latest_epoch}")
-
-    # Train the model
-    train_cmd = [
-        "python", "train.py",
-        "--pgn_files"] + all_filtered_games + [
-        "--epochs", str(args.epochs + latest_epoch),
-        "--batch_size", str(args.batch_size),
-        "--num_workers", str(args.num_workers),
-        "--save_every", "1"
+    print(f"Found {len(months)} months of downloaded games:")
+    for month in months:
+        print(f"  - {month}")
+    
+    # Construct list of PGN files
+    pgn_files = [os.path.join(GAMES_DIR, month, 'lichess_games_filtered.pgn') 
+                 for month in months]
+    
+    # Build training command
+    cmd = [
+        'python',
+        'train.py',
+        '--pgn_files'
+    ] + pgn_files + [
+        '--epochs', str(args.epochs),
+        '--batch_size', str(args.batch_size),
+        '--num_workers', str(args.num_workers),
+        '--save_every', str(args.save_every)
     ]
-
-    if args.continue_training and latest_epoch > 0:
-        train_cmd.extend([
-            "--resume_from", os.path.join(CHECKPOINTS_DIR, f"model_epoch_{latest_epoch}.pt")
-        ])
-
-    if not run_command(train_cmd, "Training model"):
-        print("\n[ERROR] Training failed!")
+    
+    if args.max_positions:
+        cmd.extend(['--max_positions', str(args.max_positions)])
+    
+    if args.resume_from:
+        cmd.extend(['--resume_from', args.resume_from])
+    
+    # Run training
+    success = run_command(cmd, "Training model")
+    if not success:
+        print("\n[ERROR] Training failed")
         return
+    
+    print("\n[SUCCESS] Training completed successfully")
 
-    print("\n[OK] Training pipeline completed successfully!")
-    print(f"[INFO] Model checkpoints are saved in: {CHECKPOINTS_DIR}")
-    print("[INFO] You can now use the model with the GUI or inference script.")
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
