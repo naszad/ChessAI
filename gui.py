@@ -1,9 +1,9 @@
 import sys
 import chess
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QLabel, QPushButton, QTextEdit, QColorDialog, QFileDialog, QInputDialog, QTabWidget, QGroupBox, QSpinBox, QActionGroup)
-from PyQt5.QtGui import QPixmap, QPainter, QColor, QPen, QFont
-from PyQt5.QtCore import Qt, QRect, QSize, pyqtSignal, QTimer
+from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QFont
+from PyQt6.QtCore import Qt, QRect, QSize, pyqtSignal, QTimer
 import os
 from inference import ChessEngine
 
