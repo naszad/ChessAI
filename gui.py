@@ -6,6 +6,7 @@ from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QFont, QActionGroup
 from PyQt6.QtCore import Qt, QRect, QSize, pyqtSignal, QTimer
 import os
 from inference import ChessEngine
+from config import MODELS_DIR
 
 class ChessSquare(QLabel):
     clicked = pyqtSignal(int, int)  # row, col
@@ -903,7 +904,7 @@ def main():
         print("Please add chess piece images to the 'pieces' directory")
         return
     
-    engine_path = "models/model_epoch_20.pt"  # Updated path to use local directory
+    engine_path = os.path.join(MODELS_DIR, "model_epoch_20.pt")
     gui = ChessGUI(engine_path)
     gui.show()
     sys.exit(app.exec())
